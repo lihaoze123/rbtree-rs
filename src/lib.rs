@@ -117,10 +117,6 @@ impl<K: Ord, V> NodePtr<K, V> {
         unsafe { &self.0.as_ref().key }
     }
 
-    fn value(&self) -> &V {
-        unsafe { &self.0.as_ref().value }
-    }
-
     fn get_parent(&self) -> Option<NodePtr<K, V>> {
         unsafe { self.0.as_ref().parent }
     }
