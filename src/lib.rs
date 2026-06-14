@@ -30,14 +30,35 @@ enum Color {
     Black,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dir {
+    Left,
+    Right,
+}
+
+impl Dir {
+    fn other(&self) -> Self {
+        match *self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+
+    fn index(&self) -> usize {
+        match *self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
+}
+
 /* Node */
 type Link<K, V> = Option<NodePtr<K, V>>;
 
 struct Node<K: Ord, V> {
     color: Color,
     parent: Link<K, V>,
-    left: Link<K, V>,
-    right: Link<K, V>,
+    child: [Link<K, V>; 2],
     key: K,
     value: V,
 }
@@ -78,29 +99,26 @@ impl<K: Ord, V> Eq for NodePtr<K, V> {}
 
 impl<K: Ord, V> NodePtr<K, V> {
     fn new(k: K, v: V) -> Self {
-        Self(unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                color: Color::Red,
-                left: None,
-                right: None,
-                parent: None,
-                key: k,
-                value: v,
-            })))
-        })
+        Self(NonNull::from(Box::leak(Box::new(Node {
+            color: Color::Red,
+            child: [None; 2],
+            parent: None,
+            key: k,
+            value: v,
+        }))))
     }
 
-    fn set_color(&mut self, color: Color) {
+    fn set_color(&self, color: Color) {
         unsafe {
-            self.0.as_mut().color = color;
+            (*self.0.as_ptr()).color = color;
         }
     }
 
-    fn set_red(&mut self) {
+    fn set_red(&self) {
         self.set_color(Color::Red);
     }
 
-    fn set_black(&mut self) {
+    fn set_black(&self) {
         self.set_color(Color::Black);
     }
 
@@ -125,88 +143,83 @@ impl<K: Ord, V> NodePtr<K, V> {
     }
 
     fn sibling(&self) -> Link<K, V> {
-        let parent = self.parent();
-        if self.is_left_child() {
-            parent.map(|p| p.right())?
-        } else {
-            parent.map(|p| p.left())?
-        }
+        let parent = self.parent()?;
+        parent.child(self.dir_from_parent()?.other())
+    }
+
+    fn set_parent(&self, parent: Link<K, V>) {
+        unsafe { (*self.0.as_ptr()).parent = parent };
+    }
+
+    fn child(&self, dir: Dir) -> Link<K, V> {
+        unsafe { (*self.0.as_ptr()).child[dir.index()] }
     }
 
     fn left(&self) -> Link<K, V> {
-        unsafe { self.0.as_ref().left }
+        self.child(Dir::Left)
     }
 
     fn right(&self) -> Link<K, V> {
-        unsafe { self.0.as_ref().right }
+        self.child(Dir::Right)
     }
 
-    fn set_parent(&mut self, parent: Link<K, V>) {
-        unsafe { self.0.as_mut().parent = parent };
+    fn set_child(&self, dir: Dir, new: Link<K, V>) {
+        unsafe { (*self.0.as_ptr()).child[dir.index()] = new };
     }
 
-    fn set_left(&mut self, left: Link<K, V>) {
-        unsafe { self.0.as_mut().left = left };
+    fn set_left(&self, left: Link<K, V>) {
+        self.set_child(Dir::Left, left);
     }
 
-    fn set_right(&mut self, right: Link<K, V>) {
-        unsafe { self.0.as_mut().right = right };
+    fn set_right(&self, right: Link<K, V>) {
+        self.set_child(Dir::Right, right);
     }
 
-    fn is_left_child(&self) -> bool {
-        self.parent()
-            .and_then(|parent| parent.left())
-            .is_some_and(|node| node == *self)
-    }
-
-    fn is_right_child(&self) -> bool {
-        self.parent()
-            .and_then(|parent| parent.right())
-            .is_some_and(|node| node == *self)
-    }
-
-    fn min_node(&self) -> Link<K, V> {
-        let mut p = *self;
-        while let Some(left) = p.left() {
-            p = left;
+    fn dir_from_parent(self) -> Option<Dir> {
+        let parent = self.parent()?;
+        if parent.child(Dir::Left) == Some(self) {
+            Some(Dir::Left)
+        } else {
+            Some(Dir::Right)
         }
-        Some(p)
     }
 
-    fn max_node(&self) -> Link<K, V> {
+    fn minmax_node(&self, dir: Dir) -> NodePtr<K, V> {
         let mut p = *self;
-        while let Some(node) = p.right() {
+        while let Some(node) = p.child(dir) {
             p = node;
         }
-        Some(p)
+        p
+    }
+
+    fn min_node(&self) -> NodePtr<K, V> {
+        self.minmax_node(Dir::Left)
+    }
+
+    fn max_node(&self) -> NodePtr<K, V> {
+        self.minmax_node(Dir::Right)
+    }
+
+    fn neibor(&self, dir: Dir) -> Link<K, V> {
+        if let Some(node) = self.child(dir) {
+            return Some(node.minmax_node(dir.other()));
+        }
+        let mut p = *self;
+        while let Some(parent) = p.parent() {
+            if p.dir_from_parent() == Some(dir.other()) {
+                return Some(parent);
+            }
+            p = parent;
+        }
+        None
     }
 
     fn prev(&self) -> Link<K, V> {
-        if let Some(left) = self.left() {
-            return left.max_node();
-        }
-        let mut p = *self;
-        while let Some(parent) = p.parent() {
-            if p.is_right_child() {
-                return Some(parent);
-            }
-            p = parent;
-        }
-        None
+        self.neibor(Dir::Left)
     }
 
     fn next(&self) -> Link<K, V> {
-        if let Some(right) = self.right() {
-            return right.min_node();
-        }
-        let mut p = *self;
-        while let Some(parent) = p.parent() {
-            if p.is_left_child() {
-                return Some(parent);
-            }
-            p = parent;
-        }
-        None
+        self.neibor(Dir::Right)
     }
 }
 
@@ -292,8 +305,8 @@ impl<K: Ord, V> RBTree<K, V> {
     /// ```
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter {
-            head: self.root.and_then(|x| x.min_node()),
-            tail: self.root.and_then(|x| x.max_node()),
+            head: self.root.map(|x| x.min_node()),
+            tail: self.root.map(|x| x.max_node()),
             len: self.len,
             _marker: PhantomData,
         }
@@ -451,10 +464,10 @@ impl<K: Ord, V> RBTree<K, V> {
             }
         }
 
-        let mut new = NodePtr::new(key, value);
+        let new = NodePtr::new(key, value);
         new.set_parent(parent);
 
-        if let Some(mut parent) = parent {
+        if let Some(parent) = parent {
             match new.key().cmp(parent.key()) {
                 Ordering::Less => {
                     parent.set_left(Some(new));
@@ -480,13 +493,13 @@ impl<K: Ord, V> RBTree<K, V> {
                 break;
             }
 
-            let Some(mut grand) = parent.parent() else {
+            let Some(grand) = parent.parent() else {
                 break;
             };
 
             let uncle = parent.sibling();
             match uncle {
-                Some(mut uncle) if uncle.is_red() => {
+                Some(uncle) if uncle.is_red() => {
                     // Case 2: parent is red and uncle is red
                     parent.set_black();
                     uncle.set_black();
@@ -495,34 +508,21 @@ impl<K: Ord, V> RBTree<K, V> {
                 }
                 _ => {
                     // Case 3: parent is red and uncle is black/nil
-                    if parent.is_left_child() {
-                        if node.is_right_child() {
-                            // LR
-                            node = parent;
-                            self.rotate_left(node);
-                            parent = node.parent().unwrap();
-                        }
-                        // LL
-                        parent.set_black();
-                        grand.set_red();
-                        self.rotate_right(grand);
-                    } else {
-                        if node.is_left_child() {
-                            // RL
-                            node = parent;
-                            self.rotate_right(node);
-                            parent = node.parent().unwrap();
-                        }
-                        // RR
-                        parent.set_black();
-                        grand.set_red();
-                        self.rotate_left(grand);
+                    if node.dir_from_parent() != parent.dir_from_parent() {
+                        // LR/RL
+                        node = parent;
+                        self.rotate(node, parent.dir_from_parent().unwrap());
+                        parent = node.parent().unwrap();
                     }
+                    // LL/RR
+                    parent.set_black();
+                    grand.set_red();
+                    self.rotate(grand, parent.dir_from_parent().unwrap().other());
                 }
             }
         }
 
-        if let Some(mut root) = self.root {
+        if let Some(root) = self.root {
             root.set_black();
         }
     }
@@ -530,16 +530,12 @@ impl<K: Ord, V> RBTree<K, V> {
     #[inline(always)]
     fn transplant(&mut self, x: NodePtr<K, V>, y: Link<K, V>) {
         let parent = x.parent();
-        if let Some(mut parent) = parent {
-            if x.is_left_child() {
-                parent.set_left(y);
-            } else {
-                parent.set_right(y);
-            }
+        if let Some(parent) = parent {
+            parent.set_child(x.dir_from_parent().unwrap(), y);
         } else {
             self.root = y;
         }
-        if let Some(mut y) = y {
+        if let Some(y) = y {
             y.set_parent(parent);
         }
     }
@@ -575,17 +571,17 @@ impl<K: Ord, V> RBTree<K, V> {
         // x can be nil, so `x_parent` and `x_is_left` is needed
         let x;
         let x_parent;
-        let x_is_left;
+        let x_dir;
 
         if node.left().is_none() {
             x = node.right();
             x_parent = node.parent();
-            x_is_left = node.is_left_child();
+            x_dir = node.dir_from_parent().unwrap_or(Dir::Left);
             self.transplant(node, x);
         } else if node.right().is_none() {
             x = node.left();
             x_parent = node.parent();
-            x_is_left = node.is_left_child();
+            x_dir = node.dir_from_parent().unwrap_or(Dir::Left);
             self.transplant(node, x);
         } else {
             // node logically has right child (or successor)
@@ -596,10 +592,10 @@ impl<K: Ord, V> RBTree<K, V> {
 
             if y.parent() == Some(node) {
                 x_parent = Some(y);
-                x_is_left = false;
+                x_dir = Dir::Right;
             } else {
                 x_parent = y.parent();
-                x_is_left = true;
+                x_dir = Dir::Left;
 
                 self.transplant(y, x);
                 y.set_right(node.right());
@@ -618,7 +614,7 @@ impl<K: Ord, V> RBTree<K, V> {
         self.len -= 1;
 
         if y_original_color == Color::Black {
-            self.remove_fixup(x, x_parent, x_is_left);
+            self.remove_fixup(x, x_parent, x_dir);
         }
 
         unsafe {
@@ -629,175 +625,97 @@ impl<K: Ord, V> RBTree<K, V> {
         }
     }
 
-    fn remove_fixup(
-        &mut self,
-        mut x: Link<K, V>,
-        mut x_parent: Link<K, V>,
-        mut x_is_left: bool,
-    ) {
+    fn remove_fixup(&mut self, mut x: Link<K, V>, mut x_parent: Link<K, V>, mut x_dir: Dir) {
         // the fixup ends when x is the root or it's real color is red
         while x != self.root && Self::is_black_node(x) {
-            if x_is_left {
-                // w is the sibling of x
-                let mut w = x_parent.unwrap().right();
-                if Self::is_red_node(w) {
-                    // Case 1: the sibling of x is red
-                    // x_parent is some
-                    x_parent.unwrap().set_red();
-                    if let Some(mut w) = w {
-                        w.set_black();
-                    }
-                    self.rotate_left(x_parent.unwrap());
-                    w = x_parent.unwrap().right();
+            // w is the sibling of x
+            let parent = x_parent.unwrap();
+            let mut w = parent.child(x_dir.other());
+            if Self::is_red_node(w) {
+                // Case 1: the sibling of x is red
+                // x_parent is some
+                parent.set_red();
+                if let Some(w) = w {
+                    w.set_black();
                 }
-                let w_left = w.and_then(|w| w.left());
-                let mut w_right = w.and_then(|w| w.right());
-                if Self::is_black_node(w_left) && Self::is_black_node(w_right) {
-                    // Case 2, sibling is black and both sibling children is black
-                    if let Some(mut w) = w {
-                        w.set_red();
-                    }
-                    x = x_parent;
-                    x_parent = x.and_then(|x| x.parent());
-                    x_is_left = x.is_some_and(|x| x.is_left_child());
-                } else {
-                    if Self::is_red_node(w_left) && Self::is_black_node(w_right) {
-                        // Case 3, sibling is black and sibling left child is red, right is black
-                        if let Some(mut w_left) = w_left {
-                            w_left.set_black();
-                        }
-                        if let Some(mut w) = w {
-                            w.set_red();
-                            self.rotate_right(w);
-                        }
-                        w = x_parent.unwrap().right();
-                        w_right = w.and_then(|w| w.right());
-                    }
-                    // Case 4, sibling is black and sibling right child is red
-                    if let Some(mut w) = w {
-                        w.set_color(Self::color_of(x_parent));
-                    }
-                    if let Some(mut w_right) = w_right {
-                        w_right.set_black();
-                    }
-                    if let Some(mut x_parent) = x_parent {
-                        x_parent.set_black();
-                        self.rotate_left(x_parent);
-                    }
-                    x = self.root;
+                self.rotate(parent, x_dir);
+                w = parent.child(x_dir.other());
+            }
+            let w_near = w.and_then(|w| w.child(x_dir));
+            let mut w_far = w.and_then(|w| w.child(x_dir.other()));
+            if Self::is_black_node(w_near) && Self::is_black_node(w_far) {
+                // Case 2, sibling is black and both sibling children is black
+                if let Some(w) = w {
+                    w.set_red();
                 }
+
+                x = x_parent;
+
+                if x == self.root {
+                    break;
+                }
+
+                x_parent = x.and_then(|x| x.parent());
+                x_dir = x.and_then(|x| x.dir_from_parent()).unwrap_or(Dir::Left);
             } else {
-                // Mirror: w is the sibling of x
-                let mut w = x_parent.unwrap().left();
-                if Self::is_red_node(w) {
-                    // Mirror Case 1: the sibling of x is red
-                    // x_parent is some
-                    x_parent.unwrap().set_red();
-                    if let Some(mut w) = w {
-                        w.set_black();
+                if Self::is_red_node(w_near) && Self::is_black_node(w_far) {
+                    // Case 3, sibling is black and sibling near child is red, far is black
+                    if let Some(w_near) = w_near {
+                        w_near.set_black();
                     }
-                    self.rotate_right(x_parent.unwrap());
-                    w = x_parent.unwrap().left();
-                }
-                let w_right = w.and_then(|w| w.right());
-                let mut w_left = w.and_then(|w| w.left());
-                if Self::is_black_node(w_right) && Self::is_black_node(w_left) {
-                    // Mirror Case 2, sibling is black and both sibling children is black
-                    if let Some(mut w) = w {
+                    if let Some(w) = w {
                         w.set_red();
+                        self.rotate(w, x_dir.other());
                     }
-                    x = x_parent;
-                    x_parent = x.and_then(|x| x.parent());
-                    x_is_left = x.is_some_and(|x| x.is_left_child());
-                } else {
-                    if Self::is_red_node(w_right) && Self::is_black_node(w_left) {
-                        // Mirror Case 3, sibling is black and sibling right child is red, left is black
-                        if let Some(mut w_right) = w_right {
-                            w_right.set_black();
-                        }
-                        if let Some(mut w) = w {
-                            w.set_red();
-                            self.rotate_left(w);
-                        }
-                        w = x_parent.unwrap().left();
-                        w_left = w.and_then(|w| w.left());
-                    }
-                    // Case 4, sibling is black and sibling left child is red
-                    if let Some(mut w) = w {
-                        w.set_color(Self::color_of(x_parent));
-                    }
-                    if let Some(mut w_left) = w_left {
-                        w_left.set_black();
-                    }
-                    if let Some(mut x_parent) = x_parent {
-                        x_parent.set_black();
-                        self.rotate_right(x_parent);
-                    }
-                    x = self.root;
+                    w = parent.child(x_dir.other());
+                    w_far = w.and_then(|w| w.child(x_dir.other()));
                 }
+                // Case 4, sibling is black and sibling far child is red
+                if let Some(w) = w {
+                    w.set_color(Self::color_of(x_parent));
+                }
+                if let Some(w_far) = w_far {
+                    w_far.set_black();
+                }
+                if let Some(x_parent) = x_parent {
+                    x_parent.set_black();
+                    self.rotate(x_parent, x_dir);
+                }
+                x = self.root;
             }
         }
 
-        if let Some(mut x) = x {
+        if let Some(x) = x {
             x.set_black();
         }
-        if let Some(mut root) = self.root {
+        if let Some(root) = self.root {
             root.set_black();
         }
     }
 
-    fn rotate_left(&mut self, mut node: NodePtr<K, V>) {
-        let Some(mut right) = node.right() else {
+    fn rotate(&mut self, node: NodePtr<K, V>, dir: Dir) {
+        let far_dir = dir.other();
+        let near_dir = dir;
+        let Some(far) = node.child(far_dir) else {
             return;
         };
-        let right_left = right.left();
+        let far_near = far.child(near_dir);
 
-        node.set_right(right_left);
-        if let Some(mut right_left) = right_left {
-            right_left.set_parent(Some(node));
+        node.set_child(far_dir, far_near);
+        if let Some(far_near) = far_near {
+            far_near.set_parent(Some(node));
         }
 
         let parent = node.parent();
-        right.set_parent(parent);
-        if let Some(mut parent) = parent {
-            if node.is_left_child() {
-                parent.set_left(Some(right));
-            } else {
-                parent.set_right(Some(right));
-            }
+        far.set_parent(parent);
+        if let Some(parent) = parent {
+            parent.set_child(node.dir_from_parent().unwrap(), Some(far));
         } else {
-            self.root = Some(right);
+            self.root = Some(far);
         }
 
-        right.set_left(Some(node));
-        node.set_parent(Some(right));
-    }
-
-    fn rotate_right(&mut self, mut node: NodePtr<K, V>) {
-        let Some(mut left) = node.left() else {
-            return;
-        };
-        let left_right = left.right();
-
-        node.set_left(left_right);
-        if let Some(mut left_right) = left_right {
-            left_right.set_parent(Some(node));
-        }
-
-        let parent = node.parent();
-        left.set_parent(parent);
-        if let Some(mut parent) = parent {
-            if node.is_right_child() {
-                parent.set_right(Some(left));
-            } else {
-                parent.set_left(Some(left));
-            }
-        } else {
-            self.root = Some(left);
-        }
-
-        left.set_right(Some(node));
-        node.set_parent(Some(left));
+        far.set_child(near_dir, Some(node));
+        node.set_parent(Some(far));
     }
 
     /// Removes all key-value pairs from the tree.
@@ -848,11 +766,7 @@ impl<K: Ord, V> Drop for RBTree<K, V> {
 
 impl<K: Ord + Debug, V: Debug> Debug for RBTree<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[")?;
-        for (k, v) in self.iter() {
-            write!(f, "({:?}, {:?})", k, v)?;
-        }
-        write!(f, "]")
+        f.debug_map().entries(self.iter()).finish()
     }
 }
 
@@ -865,7 +779,7 @@ pub struct Iter<'a, K: Ord + 'a, V: 'a> {
     head: Link<K, V>,
     tail: Link<K, V>,
     len: usize,
-    _marker: PhantomData<&'a NodePtr<K, V>>,
+    _marker: PhantomData<(&'a K, &'a V)>,
 }
 
 impl<'a, K: Ord + 'a, V: 'a> Iterator for Iter<'a, K, V> {
@@ -1159,5 +1073,55 @@ mod tests {
         }
 
         eprintln!("{:?}", rbtree.lock().unwrap());
+    }
+
+    #[test]
+    fn remove_fixup_can_bubble_to_root() {
+        let mut tree = RBTree::new();
+
+        for key in [1, 2, 3, 4] {
+            tree.insert(key, key);
+        }
+
+        assert_eq!(tree.remove(4), Some(4));
+        assert_tree_invariants(&tree, 0, 4);
+
+        assert_eq!(tree.remove(1), Some(1));
+        assert_tree_invariants(&tree, 0, 1);
+    }
+
+    #[test]
+    fn remove_single_root() {
+        let mut tree = RBTree::new();
+
+        tree.insert(1, 10);
+
+        assert_eq!(tree.remove(1), Some(10));
+        assert!(tree.is_empty());
+        assert_tree_invariants(&tree, 0, 1);
+    }
+
+    #[test]
+    fn remove_root_with_only_left_child() {
+        let mut tree = RBTree::new();
+
+        tree.insert(2, 20);
+        tree.insert(1, 10);
+
+        assert_eq!(tree.remove(2), Some(20));
+        assert_eq!(tree.get(&1), Some(&10));
+        assert_tree_invariants(&tree, 0, 2);
+    }
+
+    #[test]
+    fn remove_root_with_only_right_child() {
+        let mut tree = RBTree::new();
+
+        tree.insert(1, 10);
+        tree.insert(2, 20);
+
+        assert_eq!(tree.remove(1), Some(10));
+        assert_eq!(tree.get(&2), Some(&20));
+        assert_tree_invariants(&tree, 0, 1);
     }
 }
