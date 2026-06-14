@@ -15,7 +15,7 @@
 //! assert_eq!(tree.insert(3, "c"), None);
 //!
 //! assert_eq!(tree.get(&2), Some(&"b"));
-//! assert!(tree.contains_by_key(&1));
+//! assert!(tree.contains_key(&1));
 //!
 //! let keys: Vec<_> = tree.iter().map(|(key, _)| *key).collect();
 //! assert_eq!(keys, vec![1, 2, 3]);
@@ -101,40 +101,40 @@ impl<K: Ord, V> NodePtr<K, V> {
         self.set_color(Color::Black);
     }
 
-    fn get_color(&self) -> Color {
+    fn color(&self) -> Color {
         unsafe { self.0.as_ref().color }
     }
 
     fn is_red(&self) -> bool {
-        self.get_color() == Color::Red
+        self.color() == Color::Red
     }
 
     fn is_black(&self) -> bool {
-        self.get_color() == Color::Black
+        self.color() == Color::Black
     }
 
     fn key(&self) -> &K {
         unsafe { &self.0.as_ref().key }
     }
 
-    fn get_parent(&self) -> Option<NodePtr<K, V>> {
+    fn parent(&self) -> Option<NodePtr<K, V>> {
         unsafe { self.0.as_ref().parent }
     }
 
-    fn get_sibling(&self) -> Option<NodePtr<K, V>> {
-        let parent = self.get_parent();
+    fn sibling(&self) -> Option<NodePtr<K, V>> {
+        let parent = self.parent();
         if self.is_left_child() {
-            parent.map(|p| p.get_right_child())?
+            parent.map(|p| p.right())?
         } else {
-            parent.map(|p| p.get_left_child())?
+            parent.map(|p| p.left())?
         }
     }
 
-    fn get_left_child(&self) -> Option<NodePtr<K, V>> {
+    fn left(&self) -> Option<NodePtr<K, V>> {
         unsafe { self.0.as_ref().left }
     }
 
-    fn get_right_child(&self) -> Option<NodePtr<K, V>> {
+    fn right(&self) -> Option<NodePtr<K, V>> {
         unsafe { self.0.as_ref().right }
     }
 
@@ -142,29 +142,29 @@ impl<K: Ord, V> NodePtr<K, V> {
         unsafe { self.0.as_mut().parent = parent };
     }
 
-    fn set_left_child(&mut self, left: Option<NodePtr<K, V>>) {
+    fn set_left(&mut self, left: Option<NodePtr<K, V>>) {
         unsafe { self.0.as_mut().left = left };
     }
 
-    fn set_right_child(&mut self, right: Option<NodePtr<K, V>>) {
+    fn set_right(&mut self, right: Option<NodePtr<K, V>>) {
         unsafe { self.0.as_mut().right = right };
     }
 
     fn is_left_child(&self) -> bool {
-        self.get_parent()
-            .and_then(|parent| parent.get_left_child())
+        self.parent()
+            .and_then(|parent| parent.left())
             .is_some_and(|node| node == *self)
     }
 
     fn is_right_child(&self) -> bool {
-        self.get_parent()
-            .and_then(|parent| parent.get_right_child())
+        self.parent()
+            .and_then(|parent| parent.right())
             .is_some_and(|node| node == *self)
     }
 
     fn min_node(&self) -> Option<NodePtr<K, V>> {
         let mut p = *self;
-        while let Some(left) = p.get_left_child() {
+        while let Some(left) = p.left() {
             p = left;
         }
         Some(p)
@@ -172,18 +172,18 @@ impl<K: Ord, V> NodePtr<K, V> {
 
     fn max_node(&self) -> Option<NodePtr<K, V>> {
         let mut p = *self;
-        while let Some(node) = p.get_right_child() {
+        while let Some(node) = p.right() {
             p = node;
         }
         Some(p)
     }
 
     fn prev(&self) -> Option<NodePtr<K, V>> {
-        if let Some(left) = self.get_left_child() {
+        if let Some(left) = self.left() {
             return left.max_node();
         }
         let mut p = *self;
-        while let Some(parent) = p.get_parent() {
+        while let Some(parent) = p.parent() {
             if p.is_right_child() {
                 return Some(parent);
             }
@@ -193,11 +193,11 @@ impl<K: Ord, V> NodePtr<K, V> {
     }
 
     fn next(&self) -> Option<NodePtr<K, V>> {
-        if let Some(right) = self.get_right_child() {
+        if let Some(right) = self.right() {
             return right.min_node();
         }
         let mut p = *self;
-        while let Some(parent) = p.get_parent() {
+        while let Some(parent) = p.parent() {
             if p.is_left_child() {
                 return Some(parent);
             }
@@ -213,7 +213,7 @@ impl<K: Ord, V> NodePtr<K, V> {
 ///
 /// Keys are kept in sorted order according to their [`Ord`] implementation.
 /// Operations that search by key, such as [`insert`](Self::insert),
-/// [`get`](Self::get), and [`contains_by_key`](Self::contains_by_key), run in
+/// [`get`](Self::get), and [`contains_key`](Self::contains_key), run in
 /// logarithmic time for a balanced tree. Iteration visits every entry in key
 /// order.
 ///
@@ -330,12 +330,27 @@ impl<K: Ord, V> RBTree<K, V> {
         self.len == 0
     }
 
-    fn find_by_key(&self, key: &K) -> Option<NodePtr<K, V>> {
+    #[inline(always)]
+    fn color_of(node: Option<NodePtr<K, V>>) -> Color {
+        node.map_or(Color::Black, |node| node.color())
+    }
+
+    #[inline(always)]
+    fn is_black_node(node: Option<NodePtr<K, V>>) -> bool {
+        Self::color_of(node) == Color::Black
+    }
+
+    #[inline(always)]
+    fn is_red_node(node: Option<NodePtr<K, V>>) -> bool {
+        Self::color_of(node) == Color::Red
+    }
+
+    fn find_node(&self, key: &K) -> Option<NodePtr<K, V>> {
         let mut p = self.root;
         while let Some(node) = p {
             match key.cmp(node.key()) {
-                Ordering::Less => p = node.get_left_child(),
-                Ordering::Greater => p = node.get_right_child(),
+                Ordering::Less => p = node.left(),
+                Ordering::Greater => p = node.right(),
                 Ordering::Equal => return Some(node),
             }
         }
@@ -352,11 +367,11 @@ impl<K: Ord, V> RBTree<K, V> {
     /// let mut tree = RBTree::new();
     /// tree.insert("answer", 42);
     ///
-    /// assert!(tree.contains_by_key(&"answer"));
-    /// assert!(!tree.contains_by_key(&"missing"));
+    /// assert!(tree.contains_key(&"answer"));
+    /// assert!(!tree.contains_key(&"missing"));
     /// ```
-    pub fn contains_by_key(&self, key: &K) -> bool {
-        self.find_by_key(key).is_some()
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.find_node(key).is_some()
     }
 
     /// Returns a shared reference to the value for `key`.
@@ -375,7 +390,7 @@ impl<K: Ord, V> RBTree<K, V> {
     /// assert_eq!(tree.get(&2), None);
     /// ```
     pub fn get(&self, key: &K) -> Option<&V> {
-        unsafe { self.find_by_key(key).map(|x| &(*x.0.as_ptr()).value) }
+        unsafe { self.find_node(key).map(|x| &(*x.0.as_ptr()).value) }
     }
 
     /// Returns a mutable reference to the value for `key`.
@@ -397,7 +412,7 @@ impl<K: Ord, V> RBTree<K, V> {
     /// assert_eq!(tree.get(&"count"), Some(&2));
     /// ```
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        unsafe { self.find_by_key(key).map(|x| &mut (*x.0.as_ptr()).value) }
+        unsafe { self.find_node(key).map(|x| &mut (*x.0.as_ptr()).value) }
     }
 
     /// Inserts a key-value pair into the tree.
@@ -424,8 +439,8 @@ impl<K: Ord, V> RBTree<K, V> {
         while let Some(mut node) = p {
             parent = Some(node);
             match &key.cmp(node.key()) {
-                Ordering::Less => p = node.get_left_child(),
-                Ordering::Greater => p = node.get_right_child(),
+                Ordering::Less => p = node.left(),
+                Ordering::Greater => p = node.right(),
                 Ordering::Equal => {
                     let old = unsafe { std::mem::replace(&mut node.0.as_mut().value, value) };
                     return Some(old);
@@ -439,10 +454,10 @@ impl<K: Ord, V> RBTree<K, V> {
         if let Some(mut parent) = parent {
             match new.key().cmp(parent.key()) {
                 Ordering::Less => {
-                    parent.set_left_child(Some(new));
+                    parent.set_left(Some(new));
                 }
                 _ => {
-                    parent.set_right_child(Some(new));
+                    parent.set_right(Some(new));
                 }
             }
         } else {
@@ -456,17 +471,17 @@ impl<K: Ord, V> RBTree<K, V> {
     }
 
     fn insert_fixup(&mut self, mut node: NodePtr<K, V>) {
-        while let Some(mut parent) = node.get_parent() {
+        while let Some(mut parent) = node.parent() {
             // Case 1: parent is black
             if parent.is_black() {
                 break;
             }
 
-            let Some(mut grand) = parent.get_parent() else {
+            let Some(mut grand) = parent.parent() else {
                 break;
             };
 
-            let uncle = parent.get_sibling();
+            let uncle = parent.sibling();
             match uncle {
                 Some(mut uncle) if uncle.is_red() => {
                     // Case 2: parent is red and uncle is red
@@ -482,7 +497,7 @@ impl<K: Ord, V> RBTree<K, V> {
                             // LR
                             node = parent;
                             self.rotate_left(node);
-                            parent = node.get_parent().unwrap();
+                            parent = node.parent().unwrap();
                         }
                         // LL
                         parent.set_black();
@@ -493,7 +508,7 @@ impl<K: Ord, V> RBTree<K, V> {
                             // RL
                             node = parent;
                             self.rotate_right(node);
-                            parent = node.get_parent().unwrap();
+                            parent = node.parent().unwrap();
                         }
                         // RR
                         parent.set_black();
@@ -509,57 +524,278 @@ impl<K: Ord, V> RBTree<K, V> {
         }
     }
 
+    #[inline(always)]
+    fn transplant(&mut self, x: NodePtr<K, V>, y: Option<NodePtr<K, V>>) {
+        let parent = x.parent();
+        if let Some(mut parent) = parent {
+            if x.is_left_child() {
+                parent.set_left(y);
+            } else {
+                parent.set_right(y);
+            }
+        } else {
+            self.root = y;
+        }
+        if let Some(mut y) = y {
+            y.set_parent(parent);
+        }
+    }
+
+    /// Removes a key-value pair from the tree.
+    ///
+    /// If the key was not present, [`None`] is returned. If the key already
+    /// existed, the old value is removed and returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtree::RBTree;
+    ///
+    /// let mut tree = RBTree::new();
+    ///
+    /// tree.insert(1, 2);
+    /// tree.insert(2, 4);
+    /// tree.insert(3, 6);
+    ///
+    /// assert_eq!(tree.remove(3), Some(6));
+    /// assert_eq!(tree.get(&3), None);
+    /// assert_eq!(tree.len(), 2);
+    /// ```
+    pub fn remove(&mut self, key: K) -> Option<V> {
+        let Some(node) = self.find_node(&key) else {
+            return None;
+        };
+
+        // y may violate the red-black invariants
+        let mut y = node;
+        let mut y_original_color = y.color();
+
+        // x is the 'double black' node
+        // x can be nil, so `x_parent` and `x_is_left` is needed
+        let x;
+        let x_parent;
+        let x_is_left;
+
+        if node.left().is_none() {
+            x = node.right();
+            x_parent = node.parent();
+            x_is_left = node.is_left_child();
+            self.transplant(node, x);
+        } else if node.right().is_none() {
+            x = node.left();
+            x_parent = node.parent();
+            x_is_left = node.is_left_child();
+            self.transplant(node, x);
+        } else {
+            // node logically has right child (or successor)
+            // branch `node.left().is_none()` includes the situation that node has no child
+            y = node.next().unwrap();
+            y_original_color = y.color();
+            x = y.right();
+
+            if y.parent() == Some(node) {
+                x_parent = Some(y);
+                x_is_left = false;
+            } else {
+                x_parent = y.parent();
+                x_is_left = true;
+
+                self.transplant(y, x);
+                y.set_right(node.right());
+
+                // node has right child thus y.right() is Some
+                y.right().unwrap().set_parent(Some(y));
+            }
+
+            self.transplant(node, Some(y));
+            y.set_left(node.left());
+            // node has left child thus y.left() is Some
+            y.left().unwrap().set_parent(Some(y));
+            y.set_color(node.color());
+        }
+
+        self.len -= 1;
+
+        if y_original_color == Color::Black {
+            self.remove_fixup(x, x_parent, x_is_left);
+        }
+
+        unsafe {
+            let Node {
+                value: old_value, ..
+            } = *Box::from_raw(node.0.as_ptr());
+            Some(old_value)
+        }
+    }
+
+    fn remove_fixup(
+        &mut self,
+        mut x: Option<NodePtr<K, V>>,
+        mut x_parent: Option<NodePtr<K, V>>,
+        mut x_is_left: bool,
+    ) {
+        // the fixup ends when x is the root or it's real color is red
+        while x != self.root && Self::is_black_node(x) {
+            if x_is_left {
+                // w is the sibling of x
+                let mut w = x_parent.unwrap().right();
+                if Self::is_red_node(w) {
+                    // Case 1: the sibling of x is red
+                    // x_parent is some
+                    x_parent.unwrap().set_red();
+                    if let Some(mut w) = w {
+                        w.set_black();
+                    }
+                    self.rotate_left(x_parent.unwrap());
+                    w = x_parent.unwrap().right();
+                }
+                let w_left = w.and_then(|w| w.left());
+                let mut w_right = w.and_then(|w| w.right());
+                if Self::is_black_node(w_left) && Self::is_black_node(w_right) {
+                    // Case 2, sibling is black and both sibling children is black
+                    if let Some(mut w) = w {
+                        w.set_red();
+                    }
+                    x = x_parent;
+                    x_parent = x.and_then(|x| x.parent());
+                    x_is_left = x.map_or(false, |x| x.is_left_child())
+                } else {
+                    if Self::is_red_node(w_left) && Self::is_black_node(w_right) {
+                        // Case 3, sibling is black and sibling left child is red, right is black
+                        if let Some(mut w_left) = w_left {
+                            w_left.set_black();
+                        }
+                        if let Some(mut w) = w {
+                            w.set_red();
+                            self.rotate_right(w);
+                        }
+                        w = x_parent.unwrap().right();
+                        w_right = w.and_then(|w| w.right());
+                    }
+                    // Case 4, sibling is black and sibling right child is red
+                    if let Some(mut w) = w {
+                        w.set_color(Self::color_of(x_parent));
+                    }
+                    if let Some(mut w_right) = w_right {
+                        w_right.set_black();
+                    }
+                    if let Some(mut x_parent) = x_parent {
+                        x_parent.set_black();
+                        self.rotate_left(x_parent);
+                    }
+                    x = self.root;
+                }
+            } else {
+                // Mirror: w is the sibling of x
+                let mut w = x_parent.unwrap().left();
+                if Self::is_red_node(w) {
+                    // Mirror Case 1: the sibling of x is red
+                    // x_parent is some
+                    x_parent.unwrap().set_red();
+                    if let Some(mut w) = w {
+                        w.set_black();
+                    }
+                    self.rotate_right(x_parent.unwrap());
+                    w = x_parent.unwrap().left();
+                }
+                let w_right = w.and_then(|w| w.right());
+                let mut w_left = w.and_then(|w| w.left());
+                if Self::is_black_node(w_right) && Self::is_black_node(w_left) {
+                    // Mirror Case 2, sibling is black and both sibling children is black
+                    if let Some(mut w) = w {
+                        w.set_red();
+                    }
+                    x = x_parent;
+                    x_parent = x.and_then(|x| x.parent());
+                    x_is_left = x.map_or(false, |x| x.is_left_child())
+                } else {
+                    if Self::is_red_node(w_right) && Self::is_black_node(w_left) {
+                        // Mirror Case 3, sibling is black and sibling right child is red, left is black
+                        if let Some(mut w_right) = w_right {
+                            w_right.set_black();
+                        }
+                        if let Some(mut w) = w {
+                            w.set_red();
+                            self.rotate_left(w);
+                        }
+                        w = x_parent.unwrap().left();
+                        w_left = w.and_then(|w| w.left());
+                    }
+                    // Case 4, sibling is black and sibling left child is red
+                    if let Some(mut w) = w {
+                        w.set_color(Self::color_of(x_parent));
+                    }
+                    if let Some(mut w_left) = w_left {
+                        w_left.set_black();
+                    }
+                    if let Some(mut x_parent) = x_parent {
+                        x_parent.set_black();
+                        self.rotate_right(x_parent);
+                    }
+                    x = self.root;
+                }
+            }
+        }
+
+        if let Some(mut x) = x {
+            x.set_black();
+        }
+        if let Some(mut root) = self.root {
+            root.set_black();
+        }
+    }
+
     fn rotate_left(&mut self, mut node: NodePtr<K, V>) {
-        let Some(mut right) = node.get_right_child() else {
+        let Some(mut right) = node.right() else {
             return;
         };
-        let right_left = right.get_left_child();
+        let right_left = right.left();
 
-        node.set_right_child(right_left);
+        node.set_right(right_left);
         if let Some(mut right_left) = right_left {
             right_left.set_parent(Some(node));
         }
 
-        let parent = node.get_parent();
+        let parent = node.parent();
         right.set_parent(parent);
         if let Some(mut parent) = parent {
             if node.is_left_child() {
-                parent.set_left_child(Some(right));
+                parent.set_left(Some(right));
             } else {
-                parent.set_right_child(Some(right));
+                parent.set_right(Some(right));
             }
         } else {
             self.root = Some(right);
         }
 
-        right.set_left_child(Some(node));
+        right.set_left(Some(node));
         node.set_parent(Some(right));
     }
 
     fn rotate_right(&mut self, mut node: NodePtr<K, V>) {
-        let Some(mut left) = node.get_left_child() else {
+        let Some(mut left) = node.left() else {
             return;
         };
-        let left_right = left.get_right_child();
+        let left_right = left.right();
 
-        node.set_left_child(left_right);
+        node.set_left(left_right);
         if let Some(mut left_right) = left_right {
             left_right.set_parent(Some(node));
         }
 
-        let parent = node.get_parent();
+        let parent = node.parent();
         left.set_parent(parent);
         if let Some(mut parent) = parent {
             if node.is_right_child() {
-                parent.set_right_child(Some(left));
+                parent.set_right(Some(left));
             } else {
-                parent.set_left_child(Some(left));
+                parent.set_left(Some(left));
             }
         } else {
             self.root = Some(left);
         }
 
-        left.set_right_child(Some(node));
+        left.set_right(Some(node));
         node.set_parent(Some(left));
     }
 
@@ -588,10 +824,10 @@ impl<K: Ord, V> RBTree<K, V> {
         }
 
         while let Some(node) = stack.pop() {
-            if let Some(left) = node.get_left_child() {
+            if let Some(left) = node.left() {
                 stack.push(left);
             }
-            if let Some(right) = node.get_right_child() {
+            if let Some(right) = node.right() {
                 stack.push(right);
             }
             unsafe {
@@ -676,7 +912,61 @@ impl<'a, K: Ord + 'a, V: 'a> DoubleEndedIterator for Iter<'a, K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::{Arc, Mutex}, thread::{self}};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+        thread::{self},
+    };
+
+    fn assert_matches_btree_map(
+        tree: &RBTree<i32, i32>,
+        map: &BTreeMap<i32, i32>,
+        seed: u64,
+        step: i32,
+    ) {
+        assert_eq!(tree.len(), map.len(), "seed {seed:#x}, step {step}");
+        assert_eq!(
+            tree.is_empty(),
+            map.is_empty(),
+            "seed {seed:#x}, step {step}"
+        );
+
+        let tree_entries: Vec<_> = tree.iter().map(|(key, value)| (*key, *value)).collect();
+        let map_entries: Vec<_> = map.iter().map(|(key, value)| (*key, *value)).collect();
+        assert_eq!(
+            tree_entries, map_entries,
+            "forward iter mismatch, seed {seed:#x}, step {step}"
+        );
+
+        let tree_rev_entries: Vec<_> = tree
+            .iter()
+            .rev()
+            .map(|(key, value)| (*key, *value))
+            .collect();
+        let map_rev_entries: Vec<_> = map
+            .iter()
+            .rev()
+            .map(|(key, value)| (*key, *value))
+            .collect();
+        assert_eq!(
+            tree_rev_entries, map_rev_entries,
+            "reverse iter mismatch, seed {seed:#x}, step {step}"
+        );
+
+        for key in -60..=60 {
+            assert_eq!(
+                tree.get(&key).copied(),
+                map.get(&key).copied(),
+                "get mismatch, seed {seed:#x}, step {step}, key {key}"
+            );
+            assert_eq!(
+                tree.contains_key(&key),
+                map.contains_key(&key),
+                "contains_key mismatch, seed {seed:#x}, step {step}, key {key}"
+            );
+        }
+    }
 
     #[test]
     fn insert_get_iter() {
@@ -722,10 +1012,54 @@ mod tests {
     }
 
     #[test]
+    fn remove_matches_btree_map_for_random_operations() {
+        let seeds = [
+            0x9353_8b2d_d3cf_2a9f,
+            0x5d79_2e84_3f6a_4c71,
+            0xc2b2_ae3d_27d4_eb4f,
+            0x4f1b_92d5_7c3a_1809,
+        ];
+
+        for seed in seeds {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut tree = RBTree::new();
+            let mut map = BTreeMap::new();
+
+            for step in 0..5_000 {
+                let key = rng.random_range(-50..=50);
+
+                match rng.random_range(0..4) {
+                    0 | 1 => {
+                        let value = step * 17 + rng.random_range(0..17);
+                        assert_eq!(
+                            tree.insert(key, value),
+                            map.insert(key, value),
+                            "insert mismatch, seed {seed:#x}, step {step}, key {key}"
+                        );
+                    }
+                    _ => {
+                        assert_eq!(
+                            tree.remove(key),
+                            map.remove(&key),
+                            "remove mismatch, seed {seed:#x}, step {step}, key {key}"
+                        );
+                    }
+                }
+
+                if step % 19 == 0 {
+                    assert_matches_btree_map(&tree, &map, seed, step);
+                }
+            }
+
+            assert_matches_btree_map(&tree, &map, seed, 5_000);
+        }
+    }
+
+    #[test]
     fn insert_work_for_multithread() {
         let rbtree = Arc::new(Mutex::new(RBTree::new()));
         let mut handles = Vec::new();
-        
+
         for i in 0..10 {
             let rbtree = rbtree.clone();
             let join_handle = thread::spawn(move || {
@@ -733,11 +1067,11 @@ mod tests {
             });
             handles.push(join_handle);
         }
-        
+
         for h in handles.into_iter() {
             let _ = h.join();
-        } 
-        
+        }
+
         eprintln!("{:?}", rbtree.lock().unwrap());
     }
 }
