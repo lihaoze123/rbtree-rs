@@ -200,7 +200,7 @@ impl<K: Ord, V> NodePtr<K, V> {
         self.minmax_node(Dir::Right)
     }
 
-    fn neibor(&self, dir: Dir) -> Link<K, V> {
+    fn neighbor(&self, dir: Dir) -> Link<K, V> {
         if let Some(node) = self.child(dir) {
             return Some(node.minmax_node(dir.other()));
         }
@@ -215,11 +215,11 @@ impl<K: Ord, V> NodePtr<K, V> {
     }
 
     fn prev(&self) -> Link<K, V> {
-        self.neibor(Dir::Left)
+        self.neighbor(Dir::Left)
     }
 
     fn next(&self) -> Link<K, V> {
-        self.neibor(Dir::Right)
+        self.neighbor(Dir::Right)
     }
 }
 
