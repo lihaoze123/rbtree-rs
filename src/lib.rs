@@ -1,8 +1,9 @@
 //! A small ordered map backed by a red-black tree.
 //!
 //! [`RBTree`] stores key-value pairs ordered by key. Inserting an existing key
-//! replaces the old value and returns it. Iteration yields entries in ascending
-//! key order and also supports reverse traversal.
+//! replaces the old value and returns it. Removing an existing key returns the
+//! stored value. Iteration yields entries in ascending key order and also
+//! supports reverse traversal.
 //!
 //! # Examples
 //!
@@ -217,8 +218,8 @@ impl<K: Ord, V> NodePtr<K, V> {
 /// logarithmic time for a balanced tree. Iteration visits every entry in key
 /// order.
 ///
-/// This type currently supports insertion, lookup, mutable lookup, clearing,
-/// and ordered iteration. It does not yet provide removal of a single key.
+/// This type currently supports insertion, removal, lookup, mutable lookup,
+/// clearing, and ordered iteration.
 ///
 /// # Examples
 ///
@@ -562,9 +563,7 @@ impl<K: Ord, V> RBTree<K, V> {
     /// assert_eq!(tree.len(), 2);
     /// ```
     pub fn remove(&mut self, key: K) -> Option<V> {
-        let Some(node) = self.find_node(&key) else {
-            return None;
-        };
+        let node = self.find_node(&key)?;
 
         // y may violate the red-black invariants
         let mut y = node;
@@ -658,7 +657,7 @@ impl<K: Ord, V> RBTree<K, V> {
                     }
                     x = x_parent;
                     x_parent = x.and_then(|x| x.parent());
-                    x_is_left = x.map_or(false, |x| x.is_left_child())
+                    x_is_left = x.is_some_and(|x| x.is_left_child());
                 } else {
                     if Self::is_red_node(w_left) && Self::is_black_node(w_right) {
                         // Case 3, sibling is black and sibling left child is red, right is black
@@ -707,7 +706,7 @@ impl<K: Ord, V> RBTree<K, V> {
                     }
                     x = x_parent;
                     x_parent = x.and_then(|x| x.parent());
-                    x_is_left = x.map_or(false, |x| x.is_left_child())
+                    x_is_left = x.is_some_and(|x| x.is_left_child());
                 } else {
                     if Self::is_red_node(w_right) && Self::is_black_node(w_left) {
                         // Mirror Case 3, sibling is black and sibling right child is red, left is black
@@ -968,6 +967,86 @@ mod tests {
         }
     }
 
+    fn assert_tree_invariants<V>(tree: &RBTree<i32, V>, seed: u64, step: i32) {
+        match tree.root {
+            Some(root) => {
+                assert_eq!(root.color(), Color::Black, "seed {seed:#x}, step {step}");
+                assert!(
+                    root.parent().is_none(),
+                    "root parent pointer is set, seed {seed:#x}, step {step}"
+                );
+
+                let (len, _) = assert_node_invariants(Some(root), None, None, None, seed, step);
+                assert_eq!(
+                    len,
+                    tree.len(),
+                    "node count mismatch, seed {seed:#x}, step {step}"
+                );
+            }
+            None => {
+                assert_eq!(tree.len(), 0, "seed {seed:#x}, step {step}");
+            }
+        }
+    }
+
+    fn assert_node_invariants<V>(
+        node: Option<NodePtr<i32, V>>,
+        parent: Option<NodePtr<i32, V>>,
+        lower: Option<i32>,
+        upper: Option<i32>,
+        seed: u64,
+        step: i32,
+    ) -> (usize, usize) {
+        let Some(node) = node else {
+            return (0, 1);
+        };
+
+        let key = *node.key();
+        assert!(
+            node.parent() == parent,
+            "parent pointer mismatch at key {key}, seed {seed:#x}, step {step}"
+        );
+
+        if let Some(lower) = lower {
+            assert!(
+                key > lower,
+                "BST lower-bound violation at key {key}, lower {lower}, seed {seed:#x}, step {step}"
+            );
+        }
+        if let Some(upper) = upper {
+            assert!(
+                key < upper,
+                "BST upper-bound violation at key {key}, upper {upper}, seed {seed:#x}, step {step}"
+            );
+        }
+
+        if node.is_red() {
+            assert!(
+                RBTree::<i32, V>::is_black_node(node.left()),
+                "red node has red left child at key {key}, seed {seed:#x}, step {step}"
+            );
+            assert!(
+                RBTree::<i32, V>::is_black_node(node.right()),
+                "red node has red right child at key {key}, seed {seed:#x}, step {step}"
+            );
+        }
+
+        let (left_len, left_black_height) =
+            assert_node_invariants(node.left(), Some(node), lower, Some(key), seed, step);
+        let (right_len, right_black_height) =
+            assert_node_invariants(node.right(), Some(node), Some(key), upper, seed, step);
+
+        assert_eq!(
+            left_black_height, right_black_height,
+            "black-height mismatch at key {key}, seed {seed:#x}, step {step}"
+        );
+
+        (
+            left_len + right_len + 1,
+            left_black_height + usize::from(node.is_black()),
+        )
+    }
+
     #[test]
     fn insert_get_iter() {
         let mut tree = RBTree::new();
@@ -976,6 +1055,7 @@ mod tests {
 
         for x in data {
             assert_eq!(tree.insert(x, x * 10), None);
+            assert_tree_invariants(&tree, 0, x);
         }
 
         eprintln!("{:?}", tree);
@@ -985,6 +1065,7 @@ mod tests {
         assert_eq!(tree.get(&99), None);
 
         assert_eq!(tree.insert(15, 151), Some(150));
+        assert_tree_invariants(&tree, 0, 15);
         assert_eq!(tree.get(&15), Some(&151));
         assert_eq!(tree.len(), 9);
 
@@ -1007,6 +1088,7 @@ mod tests {
 
         tree.clear();
 
+        assert_tree_invariants(&tree, 0, 0);
         assert!(tree.is_empty());
         assert_eq!(tree.get(&1), None);
     }
@@ -1045,6 +1127,8 @@ mod tests {
                         );
                     }
                 }
+
+                assert_tree_invariants(&tree, seed, step);
 
                 if step % 19 == 0 {
                     assert_matches_btree_map(&tree, &map, seed, step);
