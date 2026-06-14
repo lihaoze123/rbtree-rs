@@ -31,11 +31,13 @@ enum Color {
 }
 
 /* Node */
+type Link<K, V> = Option<NodePtr<K, V>>;
+
 struct Node<K: Ord, V> {
     color: Color,
-    parent: Option<NodePtr<K, V>>,
-    left: Option<NodePtr<K, V>>,
-    right: Option<NodePtr<K, V>>,
+    parent: Link<K, V>,
+    left: Link<K, V>,
+    right: Link<K, V>,
     key: K,
     value: V,
 }
@@ -118,11 +120,11 @@ impl<K: Ord, V> NodePtr<K, V> {
         unsafe { &self.0.as_ref().key }
     }
 
-    fn parent(&self) -> Option<NodePtr<K, V>> {
+    fn parent(&self) -> Link<K, V> {
         unsafe { self.0.as_ref().parent }
     }
 
-    fn sibling(&self) -> Option<NodePtr<K, V>> {
+    fn sibling(&self) -> Link<K, V> {
         let parent = self.parent();
         if self.is_left_child() {
             parent.map(|p| p.right())?
@@ -131,23 +133,23 @@ impl<K: Ord, V> NodePtr<K, V> {
         }
     }
 
-    fn left(&self) -> Option<NodePtr<K, V>> {
+    fn left(&self) -> Link<K, V> {
         unsafe { self.0.as_ref().left }
     }
 
-    fn right(&self) -> Option<NodePtr<K, V>> {
+    fn right(&self) -> Link<K, V> {
         unsafe { self.0.as_ref().right }
     }
 
-    fn set_parent(&mut self, parent: Option<NodePtr<K, V>>) {
+    fn set_parent(&mut self, parent: Link<K, V>) {
         unsafe { self.0.as_mut().parent = parent };
     }
 
-    fn set_left(&mut self, left: Option<NodePtr<K, V>>) {
+    fn set_left(&mut self, left: Link<K, V>) {
         unsafe { self.0.as_mut().left = left };
     }
 
-    fn set_right(&mut self, right: Option<NodePtr<K, V>>) {
+    fn set_right(&mut self, right: Link<K, V>) {
         unsafe { self.0.as_mut().right = right };
     }
 
@@ -163,7 +165,7 @@ impl<K: Ord, V> NodePtr<K, V> {
             .is_some_and(|node| node == *self)
     }
 
-    fn min_node(&self) -> Option<NodePtr<K, V>> {
+    fn min_node(&self) -> Link<K, V> {
         let mut p = *self;
         while let Some(left) = p.left() {
             p = left;
@@ -171,7 +173,7 @@ impl<K: Ord, V> NodePtr<K, V> {
         Some(p)
     }
 
-    fn max_node(&self) -> Option<NodePtr<K, V>> {
+    fn max_node(&self) -> Link<K, V> {
         let mut p = *self;
         while let Some(node) = p.right() {
             p = node;
@@ -179,7 +181,7 @@ impl<K: Ord, V> NodePtr<K, V> {
         Some(p)
     }
 
-    fn prev(&self) -> Option<NodePtr<K, V>> {
+    fn prev(&self) -> Link<K, V> {
         if let Some(left) = self.left() {
             return left.max_node();
         }
@@ -193,7 +195,7 @@ impl<K: Ord, V> NodePtr<K, V> {
         None
     }
 
-    fn next(&self) -> Option<NodePtr<K, V>> {
+    fn next(&self) -> Link<K, V> {
         if let Some(right) = self.right() {
             return right.min_node();
         }
@@ -234,7 +236,7 @@ impl<K: Ord, V> NodePtr<K, V> {
 /// assert_eq!(tree.get(&"rust"), Some(&2024));
 /// ```
 pub struct RBTree<K: Ord, V> {
-    root: Option<NodePtr<K, V>>,
+    root: Link<K, V>,
     len: usize,
     _marker: PhantomData<Box<Node<K, V>>>,
 }
@@ -332,21 +334,21 @@ impl<K: Ord, V> RBTree<K, V> {
     }
 
     #[inline(always)]
-    fn color_of(node: Option<NodePtr<K, V>>) -> Color {
+    fn color_of(node: Link<K, V>) -> Color {
         node.map_or(Color::Black, |node| node.color())
     }
 
     #[inline(always)]
-    fn is_black_node(node: Option<NodePtr<K, V>>) -> bool {
+    fn is_black_node(node: Link<K, V>) -> bool {
         Self::color_of(node) == Color::Black
     }
 
     #[inline(always)]
-    fn is_red_node(node: Option<NodePtr<K, V>>) -> bool {
+    fn is_red_node(node: Link<K, V>) -> bool {
         Self::color_of(node) == Color::Red
     }
 
-    fn find_node(&self, key: &K) -> Option<NodePtr<K, V>> {
+    fn find_node(&self, key: &K) -> Link<K, V> {
         let mut p = self.root;
         while let Some(node) = p {
             match key.cmp(node.key()) {
@@ -526,7 +528,7 @@ impl<K: Ord, V> RBTree<K, V> {
     }
 
     #[inline(always)]
-    fn transplant(&mut self, x: NodePtr<K, V>, y: Option<NodePtr<K, V>>) {
+    fn transplant(&mut self, x: NodePtr<K, V>, y: Link<K, V>) {
         let parent = x.parent();
         if let Some(mut parent) = parent {
             if x.is_left_child() {
@@ -629,8 +631,8 @@ impl<K: Ord, V> RBTree<K, V> {
 
     fn remove_fixup(
         &mut self,
-        mut x: Option<NodePtr<K, V>>,
-        mut x_parent: Option<NodePtr<K, V>>,
+        mut x: Link<K, V>,
+        mut x_parent: Link<K, V>,
         mut x_is_left: bool,
     ) {
         // the fixup ends when x is the root or it's real color is red
@@ -860,8 +862,8 @@ impl<K: Ord + Debug, V: Debug> Debug for RBTree<K, V> {
 /// This iterator is created by [`RBTree::iter`]. It yields key-value pairs in
 /// ascending key order and can also iterate from the back.
 pub struct Iter<'a, K: Ord + 'a, V: 'a> {
-    head: Option<NodePtr<K, V>>,
-    tail: Option<NodePtr<K, V>>,
+    head: Link<K, V>,
+    tail: Link<K, V>,
     len: usize,
     _marker: PhantomData<&'a NodePtr<K, V>>,
 }
